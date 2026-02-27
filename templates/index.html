@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Pause</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: rgba(255,255,255,0.04);
+            --card-border: rgba(255,255,255,0.08);
+            --card-hover: rgba(255,255,255,0.07);
+            --text: #e4e4e7;
+            --text-dim: #71717a;
+            --accent: #22d3ee;
+            --accent-glow: rgba(34,211,238,0.15);
+            --green: #4ade80;
+            --orange: #fb923c;
+            --red: #f87171;
+            --radius: 16px;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        /* Background gradient */
+        body::before {
+            content:'';
+            position: fixed; top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(ellipse at 30% 20%, rgba(34,211,238,0.06) 0%, transparent 50%),
+                        radial-gradient(ellipse at 70% 80%, rgba(139,92,246,0.04) 0%, transparent 50%);
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 4px;
+        }
+        .header p {
+            color: var(--text-dim);
+            font-size: 14px;
+        }
+
+        /* Status Indicator */
+        .status-card {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 28px;
+            text-align: center;
+            margin-bottom: 16px;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+        .status-icon {
+            width: 64px; height: 64px;
+            border-radius: 50%;
+            margin: 0 auto 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            transition: all 0.4s ease;
+        }
+        .status-icon.idle {
+            background: rgba(34,211,238,0.12);
+            box-shadow: 0 0 24px rgba(34,211,238,0.15);
+        }
+        .status-icon.active {
+            background: rgba(251,146,60,0.12);
+            box-shadow: 0 0 24px rgba(251,146,60,0.15);
+            animation: pulse 2s infinite;
+        }
+        .status-icon.stopped {
+            background: rgba(113,113,122,0.12);
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        .status-text {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .status-sub {
+            color: var(--text-dim);
+            font-size: 13px;
+        }
+
+        /* Toggle Button */
+        .toggle-btn {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 32px;
+            border-radius: 28px;
+            border: none;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .toggle-btn.start {
+            background: linear-gradient(135deg, #22d3ee, #06b6d4);
+            color: #0f1117;
+        }
+        .toggle-btn.stop {
+            background: linear-gradient(135deg, #f87171, #ef4444);
+            color: white;
+        }
+        .toggle-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
+
+        /* Process cards */
+        .cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 16px;
+            backdrop-filter: blur(12px);
+        }
+        .card-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+        .card-value {
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 24px;
+        }
+        .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+        .dot.orange { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+        .dot.gray { background: #52525b; }
+
+        /* Log panel */
+        .log-panel {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+            backdrop-filter: blur(12px);
+            overflow: hidden;
+        }
+        .log-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .log-header span {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dim);
+        }
+        .log-clear {
+            font-size: 12px;
+            color: var(--text-dim);
+            background: none;
+            border: 1px solid var(--card-border);
+            border-radius: 6px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.15s;
+        }
+        .log-clear:hover { color: var(--text); border-color: var(--text-dim); }
+        .log-body {
+            height: 280px;
+            overflow-y: auto;
+            padding: 8px 0;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 12.5px;
+            line-height: 1.7;
+        }
+        .log-body::-webkit-scrollbar { width: 6px; }
+        .log-body::-webkit-scrollbar-track { background: transparent; }
+        .log-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .log-line {
+            padding: 1px 16px;
+            white-space: nowrap;
+            animation: fadeIn 0.2s ease;
+        }
+        .log-line .time { color: #52525b; }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+
+        /* Settings */
+        .settings-panel {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 20px;
+            backdrop-filter: blur(12px);
+        }
+        .settings-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dim);
+            margin-bottom: 16px;
+        }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .setting-row:last-child { margin-bottom: 0; }
+        .setting-label {
+            font-size: 13px;
+            color: var(--text);
+        }
+        .setting-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .setting-value {
+            font-size: 13px;
+            color: var(--accent);
+            font-weight: 600;
+            min-width: 40px;
+            text-align: right;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 140px;
+            height: 4px;
+            border-radius: 2px;
+            background: #27272a;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(34,211,238,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎵 Music Pause</h1>
+            <p>浏览器播放视频时自动静音音乐客户端</p>
+        </div>
+
+        <!-- Status -->
+        <div class="status-card">
+            <div class="status-icon stopped" id="statusIcon">🎵</div>
+            <div class="status-text" id="statusText">正在连接...</div>
+            <div class="status-sub" id="statusSub">—</div>
+            <button class="toggle-btn start" id="toggleBtn" onclick="toggleEngine()">启动监控</button>
+        </div>
+
+        <!-- Process Cards -->
+        <div class="cards">
+            <div class="card">
+                <div class="card-label">🌐 浏览器</div>
+                <div class="card-value" id="browserStatus">
+                    <span class="dot gray"></span>
+                    <span>无音频</span>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-label">🎵 音乐客户端</div>
+                <div class="card-value" id="musicStatus">
+                    <span class="dot gray"></span>
+                    <span>无音频</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Log -->
+        <div class="log-panel">
+            <div class="log-header">
+                <span>📋 实时日志</span>
+                <button class="log-clear" onclick="clearLogs()">清除</button>
+            </div>
+            <div class="log-body" id="logBody"></div>
+        </div>
+
+        <!-- Settings -->
+        <div class="settings-panel">
+            <div class="settings-title">⚙️ 设置</div>
+            <div class="setting-row">
+                <span class="setting-label">轮询间隔</span>
+                <div class="setting-right">
+                    <input type="range" id="pollInterval" min="0.1" max="2" step="0.1" value="0.2" oninput="updateSetting()">
+                    <span class="setting-value" id="pollIntervalVal">0.2s</span>
+                </div>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">恢复延迟</span>
+                <div class="setting-right">
+                    <input type="range" id="resumeDelay" min="0" max="10" step="0.5" value="1" oninput="updateSetting()">
+                    <span class="setting-value" id="resumeDelayVal">1s</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+        const logBody = document.getElementById('logBody');
+        let isRunning = false;
+
+        // ── SocketIO Events ──
+
+        socket.on('state', (data) => {
+            isRunning = data.running;
+            updateStatusUI(data);
+            updateProcessCards(data);
+            updateToggleBtn();
+        });
+
+        socket.on('settings', (data) => {
+            document.getElementById('pollInterval').value = data.poll_interval;
+            document.getElementById('pollIntervalVal').textContent = data.poll_interval + 's';
+            document.getElementById('resumeDelay').value = data.resume_delay;
+            document.getElementById('resumeDelayVal').textContent = data.resume_delay + 's';
+        });
+
+        socket.on('log', (data) => {
+            addLog(data.message);
+        });
+
+        // ── UI Updates ──
+
+        function updateStatusUI(data) {
+            const icon = document.getElementById('statusIcon');
+            const text = document.getElementById('statusText');
+            const sub = document.getElementById('statusSub');
+
+            icon.className = 'status-icon';
+
+            if (!data.running) {
+                icon.classList.add('stopped');
+                icon.textContent = '⏹️';
+                text.textContent = '监控已停止';
+                sub.textContent = '点击下方按钮启动';
+            } else if (data.state === 'BROWSER_ACTIVE' || data.state === 'WAITING_RESUME') {
+                icon.classList.add('active');
+                icon.textContent = '⏸️';
+                text.textContent = data.muted.length > 0 ? '音乐已静音' : '浏览器播放中';
+                sub.textContent = data.muted.length > 0
+                    ? `已静音: ${data.muted.join(', ')}`
+                    : '未检测到音乐播放';
+            } else {
+                icon.classList.add('idle');
+                icon.textContent = '🎵';
+                text.textContent = '监控中';
+                sub.textContent = '等待浏览器播放视频...';
+            }
+        }
+
+        function updateProcessCards(data) {
+            const browserEl = document.getElementById('browserStatus');
+            const musicEl = document.getElementById('musicStatus');
+
+            if (data.browser_playing && data.browser_playing.length > 0) {
+                browserEl.innerHTML = `<span class="dot green"></span><span>${data.browser_playing.join(', ')}</span>`;
+            } else {
+                browserEl.innerHTML = '<span class="dot gray"></span><span>无音频</span>';
+            }
+
+            if (data.muted && data.muted.length > 0) {
+                musicEl.innerHTML = `<span class="dot orange"></span><span>${data.muted.join(', ')} (已静音)</span>`;
+            } else if (data.music_playing && data.music_playing.length > 0) {
+                musicEl.innerHTML = `<span class="dot green"></span><span>${data.music_playing.join(', ')}</span>`;
+            } else {
+                musicEl.innerHTML = '<span class="dot gray"></span><span>无音频</span>';
+            }
+        }
+
+        function updateToggleBtn() {
+            const btn = document.getElementById('toggleBtn');
+            if (isRunning) {
+                btn.className = 'toggle-btn stop';
+                btn.textContent = '停止监控';
+            } else {
+                btn.className = 'toggle-btn start';
+                btn.textContent = '启动监控';
+            }
+        }
+
+        function addLog(msg) {
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            // Color the timestamp
+            const parts = msg.match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s(.*)$/);
+            if (parts) {
+                line.innerHTML = `<span class="time">${parts[1]}</span>  ${parts[2]}`;
+            } else {
+                line.textContent = msg;
+            }
+            logBody.appendChild(line);
+            // Keep last 200 lines
+            while (logBody.children.length > 200) {
+                logBody.removeChild(logBody.firstChild);
+            }
+            logBody.scrollTop = logBody.scrollHeight;
+        }
+
+        function clearLogs() {
+            logBody.innerHTML = '';
+        }
+
+        // ── Actions ──
+
+        async function toggleEngine() {
+            const endpoint = isRunning ? '/api/stop' : '/api/start';
+            await fetch(endpoint, { method: 'POST' });
+        }
+
+        let settingTimeout = null;
+        function updateSetting() {
+            const pi = document.getElementById('pollInterval');
+            const rd = document.getElementById('resumeDelay');
+            document.getElementById('pollIntervalVal').textContent = pi.value + 's';
+            document.getElementById('resumeDelayVal').textContent = rd.value + 's';
+
+            clearTimeout(settingTimeout);
+            settingTimeout = setTimeout(async () => {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        poll_interval: parseFloat(pi.value),
+                        resume_delay: parseFloat(rd.value),
+                    })
+                });
+            }, 300);
+        }
+    </script>
+</body>
+</html>
