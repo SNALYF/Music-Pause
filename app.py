@@ -2,11 +2,12 @@
 """
 Music Pause - 原生桌面应用
 =========================
-customtkinter GUI + pystray 系统托盘。
+customtkinter GUI + pystray 系统托盘 + 动画。
 """
 
 import customtkinter as ctk
 import logging
+import math
 import sys
 import threading
 import time
@@ -20,6 +21,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s.%(msecs)03d %(messag
 log = logging.getLogger("MusicPause")
 
 
+# ─── 颜色工具 ────────────────────────────────────────────
+
+def hex_to_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def rgb_to_hex(r, g, b):
+    return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+
+def lerp_color(c1, c2, t):
+    """t=0 返回 c1, t=1 返回 c2"""
+    r1, g1, b1 = hex_to_rgb(c1)
+    r2, g2, b2 = hex_to_rgb(c2)
+    return rgb_to_hex(r1 + (r2-r1)*t, g1 + (g2-g1)*t, b1 + (b2-b1)*t)
+
+
 # ─── 主窗口 ────────────────────────────────────────────────
 
 class MusicPauseApp(ctk.CTk):
@@ -28,7 +45,7 @@ class MusicPauseApp(ctk.CTk):
 
         # 窗口设置
         self.title("Music Pause")
-        self.geometry("520x700")
+        self.geometry("520x760")
         self.minsize(450, 500)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -39,6 +56,13 @@ class MusicPauseApp(ctk.CTk):
         # 系统托盘
         self._tray_icon = None
         self._tray_thread = None
+
+        # 动画状态
+        self._pulse_phase = 0.0
+        self._prev_state = "IDLE"
+        self._flash_count = 0
+        self._fade_progress = 0.0  # 0.0-1.0 渐变进度
+        self._fade_active = False
 
         # 窗口关闭处理
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -51,6 +75,9 @@ class MusicPauseApp(ctk.CTk):
         # 构建界面
         self._build_ui()
 
+        # 启动动画循环
+        self._animate_pulse()
+
         # 自动启动监控
         self.after(500, self.engine.start)
 
@@ -58,7 +85,7 @@ class MusicPauseApp(ctk.CTk):
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)  # 日志区域扩展
+        self.grid_rowconfigure(4, weight=1)  # 日志区域扩展
 
         # ── 标题 ──
         title_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -69,15 +96,15 @@ class MusicPauseApp(ctk.CTk):
                      font=ctk.CTkFont(size=12), text_color="gray").pack()
 
         # ── 状态区域 ──
-        status_frame = ctk.CTkFrame(self)
-        status_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
-        status_frame.grid_columnconfigure(1, weight=1)
+        self.status_frame = ctk.CTkFrame(self)
+        self.status_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        self.status_frame.grid_columnconfigure(1, weight=1)
 
-        self.status_indicator = ctk.CTkLabel(status_frame, text="●", font=ctk.CTkFont(size=20),
+        self.status_indicator = ctk.CTkLabel(self.status_frame, text="●", font=ctk.CTkFont(size=20),
                                               text_color="#22d3ee", width=30)
         self.status_indicator.grid(row=0, column=0, padx=(15, 5), pady=12)
 
-        status_text_frame = ctk.CTkFrame(status_frame, fg_color="transparent")
+        status_text_frame = ctk.CTkFrame(self.status_frame, fg_color="transparent")
         status_text_frame.grid(row=0, column=1, padx=5, pady=12, sticky="w")
         self.status_label = ctk.CTkLabel(status_text_frame, text="监控中",
                                           font=ctk.CTkFont(size=15, weight="bold"))
@@ -86,7 +113,7 @@ class MusicPauseApp(ctk.CTk):
                                         font=ctk.CTkFont(size=11), text_color="gray")
         self.status_sub.pack(anchor="w")
 
-        self.toggle_btn = ctk.CTkButton(status_frame, text="停止", width=70, height=32,
+        self.toggle_btn = ctk.CTkButton(self.status_frame, text="停止", width=70, height=32,
                                          command=self._toggle_engine,
                                          fg_color="#ef4444", hover_color="#dc2626")
         self.toggle_btn.grid(row=0, column=2, padx=15, pady=12)
@@ -107,17 +134,44 @@ class MusicPauseApp(ctk.CTk):
         self.browser_label.pack(padx=12, pady=(2, 8), anchor="w")
 
         # 音乐卡片
-        music_card = ctk.CTkFrame(cards_frame)
-        music_card.grid(row=0, column=1, padx=(5, 0), sticky="ew")
-        ctk.CTkLabel(music_card, text="🎵 音乐客户端", font=ctk.CTkFont(size=10),
+        self.music_card = ctk.CTkFrame(cards_frame)
+        self.music_card.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        ctk.CTkLabel(self.music_card, text="🎵 音乐客户端", font=ctk.CTkFont(size=10),
                      text_color="gray").pack(padx=12, pady=(8, 2), anchor="w")
-        self.music_label = ctk.CTkLabel(music_card, text="● 无音频",
+        self.music_label = ctk.CTkLabel(self.music_card, text="● 无音频",
                                          font=ctk.CTkFont(size=13), text_color="#71717a")
         self.music_label.pack(padx=12, pady=(2, 8), anchor="w")
 
+        # ── 媒体信息 ──
+        self.media_frame = ctk.CTkFrame(self)
+        self.media_frame.grid(row=3, column=0, padx=20, pady=(0, 5), sticky="ew")
+        self.media_frame.grid_columnconfigure(1, weight=1)
+
+        # 浏览器视频标题
+        self.video_icon = ctk.CTkLabel(self.media_frame, text="🌐", font=ctk.CTkFont(size=16), width=28)
+        self.video_icon.grid(row=0, column=0, padx=(12, 4), pady=(10, 2))
+        self.video_title = ctk.CTkLabel(self.media_frame, text="无视频播放",
+                                         font=ctk.CTkFont(size=12),
+                                         text_color="#71717a", anchor="w")
+        self.video_title.grid(row=0, column=1, padx=(4, 12), pady=(10, 2), sticky="w")
+
+        # 音乐客户端标题
+        self.song_icon = ctk.CTkLabel(self.media_frame, text="🎵", font=ctk.CTkFont(size=16), width=28)
+        self.song_icon.grid(row=1, column=0, padx=(12, 4), pady=(2, 2))
+        self.song_title = ctk.CTkLabel(self.media_frame, text="无音乐播放",
+                                        font=ctk.CTkFont(size=12),
+                                        text_color="#71717a", anchor="w")
+        self.song_title.grid(row=1, column=1, padx=(4, 12), pady=(2, 2), sticky="w")
+
+        # 渐变进度条
+        self.fade_bar = ctk.CTkProgressBar(self.media_frame, height=3, width=200,
+                                            progress_color="#22d3ee")
+        self.fade_bar.grid(row=2, column=0, columnspan=2, padx=12, pady=(2, 8), sticky="ew")
+        self.fade_bar.set(0)
+
         # ── 日志区域 ──
         log_frame = ctk.CTkFrame(self)
-        log_frame.grid(row=3, column=0, padx=20, pady=5, sticky="nsew")
+        log_frame.grid(row=4, column=0, padx=20, pady=5, sticky="nsew")
         log_frame.grid_rowconfigure(1, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
 
@@ -138,7 +192,7 @@ class MusicPauseApp(ctk.CTk):
 
         # ── 设置区域 ──
         settings_frame = ctk.CTkFrame(self)
-        settings_frame.grid(row=4, column=0, padx=20, pady=(5, 20), sticky="ew")
+        settings_frame.grid(row=5, column=0, padx=20, pady=(5, 20), sticky="ew")
         settings_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(settings_frame, text="⚙️ 设置", font=ctk.CTkFont(size=11),
@@ -188,22 +242,31 @@ class MusicPauseApp(ctk.CTk):
         browsers = info.get("browser_playing", [])
         music = info.get("music_playing", [])
 
+        old_state = self._prev_state
+        self._prev_state = state
+
         # 状态指示
         if not running:
-            self.status_indicator.configure(text_color="#71717a")
             self.status_label.configure(text="已停止")
             self.status_sub.configure(text="监控未运行")
             self.toggle_btn.configure(text="启动", fg_color="#22d3ee", hover_color="#06b6d4")
         elif state in ("BROWSER_ACTIVE", "WAITING_RESUME") and muted:
-            self.status_indicator.configure(text_color="#fb923c")
             self.status_label.configure(text="音乐已静音")
             self.status_sub.configure(text=f"已静音: {', '.join(muted)}")
             self.toggle_btn.configure(text="停止", fg_color="#ef4444", hover_color="#dc2626")
         else:
-            self.status_indicator.configure(text_color="#22d3ee")
             self.status_label.configure(text="监控中")
             self.status_sub.configure(text="等待浏览器播放视频...")
             self.toggle_btn.configure(text="停止", fg_color="#ef4444", hover_color="#dc2626")
+
+        # 状态变化 → 进度条动画
+        if state != old_state:
+            if state in ("BROWSER_ACTIVE", "WAITING_RESUME") and muted:
+                self.fade_bar.configure(progress_color="#fb923c")
+                self._animate_fade_bar(1.0, 0.0)  # 渐出动画
+            elif old_state in ("BROWSER_ACTIVE", "WAITING_RESUME") and state == "IDLE":
+                self.fade_bar.configure(progress_color="#4ade80")
+                self._animate_fade_bar(0.0, 1.0)  # 渐入动画
 
         # 进程卡片
         if browsers:
@@ -218,6 +281,26 @@ class MusicPauseApp(ctk.CTk):
         else:
             self.music_label.configure(text="● 无音频", text_color="#71717a")
 
+        # 媒体标题
+        browser_media = info.get("browser_media", [])
+        music_media = info.get("music_media", [])
+
+        if browser_media:
+            vm = browser_media[0]
+            t = vm.get("title", "")
+            self.video_title.configure(text=t, text_color="#4ade80")
+        else:
+            self.video_title.configure(text="无视频播放", text_color="#71717a")
+
+        if music_media:
+            sm = music_media[0]
+            title = sm.get("title", "")
+            artist = sm.get("artist", "")
+            text = f"{artist} - {title}" if artist else title
+            self.song_title.configure(text=text, text_color="#22d3ee")
+        else:
+            self.song_title.configure(text="无音乐播放", text_color="#71717a")
+
     def _append_log(self, msg):
         """添加日志（可能从后台线程调用）"""
         self.after(0, lambda: self._add_log_line(msg))
@@ -225,7 +308,6 @@ class MusicPauseApp(ctk.CTk):
     def _add_log_line(self, msg):
         self.log_text.configure(state="normal")
         self.log_text.insert("end", msg + "\n")
-        # 保留最近 500 行
         lines = int(self.log_text.index("end-1c").split(".")[0])
         if lines > 500:
             self.log_text.delete("1.0", f"{lines - 500}.0")
@@ -236,6 +318,47 @@ class MusicPauseApp(ctk.CTk):
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
+
+    # ─── 动画方法 ───────────────────────────────────────
+
+    def _animate_pulse(self):
+        """状态指示器呼吸脉冲动画"""
+        self._pulse_phase += 0.08
+        t = (math.sin(self._pulse_phase) + 1) / 2
+
+        state = self._prev_state
+        if not self.engine.is_running:
+            color = lerp_color("#3f3f46", "#71717a", t)
+        elif state in ("BROWSER_ACTIVE", "WAITING_RESUME") and self.engine._muted_names:
+            color = lerp_color("#7c2d12", "#fb923c", t)
+        else:
+            color = lerp_color("#0e4d5c", "#22d3ee", t)
+
+        self.status_indicator.configure(text_color=color)
+        self.after(50, self._animate_pulse)
+
+    def _animate_fade_bar(self, start, end):
+        """渐变进度条动画"""
+        steps = 30
+        duration = 800
+        step_ms = duration // steps
+        self._fade_step = 0
+        self._fade_start = start
+        self._fade_end = end
+        self._fade_steps = steps
+        self._fade_step_ms = step_ms
+        self._do_fade_bar()
+
+    def _do_fade_bar(self):
+        if self._fade_step > self._fade_steps:
+            return
+        t = self._fade_step / self._fade_steps
+        # 缓动函数 (ease-in-out)
+        t = t * t * (3 - 2 * t)
+        val = self._fade_start + (self._fade_end - self._fade_start) * t
+        self.fade_bar.set(max(0, min(1, val)))
+        self._fade_step += 1
+        self.after(self._fade_step_ms, self._do_fade_bar)
 
     def _toggle_engine(self):
         if self.engine.is_running:
